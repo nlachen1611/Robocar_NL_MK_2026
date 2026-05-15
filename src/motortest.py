@@ -110,9 +110,9 @@ def front_right(speed=0):
 
 init()
 
-rear_right(0)  #fertig
-front_left(0)
-rear_left(0)   #fertig
-front_right(0)
-time.sleep(1)
+rear_right(30)  #fertig
+front_left(30)
+rear_left(-30)   #fertig
+front_right(-30)
+time.sleep(5)
 stop_all()
