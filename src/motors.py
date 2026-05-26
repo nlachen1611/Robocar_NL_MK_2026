@@ -1,118 +1,165 @@
 import logging
-import time
 
-import board
-from adafruit_pca9685 import PCA9685
 
 log = logging.getLogger(__name__)
 
-i2c = board.I2C()
-
-pca = PCA9685(i2c)
-
-current_speed_front_left = 0
-current_speed_front_right = 0
-current_speed_rear_left = 0
-current_speed_rear_right = 0
+# Maximale PWM-Aufloesung des PCA9685.
+# 0xFFFF entspricht 100 Prozent Einschaltdauer.
+MAXIMALE_PWM_AUFLOESUNG = 0xFFFF
 
 
-def init():
-    log.info("initialize the PWM module")
-    pca.frequency = 50
-    pca.channels[0].duty_cycle = 0
-    pca.channels[1].duty_cycle = 0
-    pca.channels[2].duty_cycle = 0
-    pca.channels[3].duty_cycle = 0
-    pca.channels[4].duty_cycle = 0
-    pca.channels[5].duty_cycle = 0
-    pca.channels[6].duty_cycle = 0
-    pca.channels[7].duty_cycle = 0
+class MotorSteuerung:
+    # Diese Klasse kapselt die komplette Motoransteuerung ueber den PCA9685.
+    def __init__(self, pca, mindest_motor_geschwindigkeit):
+        # Referenz auf das PWM-Modul.
+        # Ueber dieses Objekt werden spaeter die einzelnen PWM-Kanaele gesetzt.
+        self.pca = pca
 
+        # Kleinster erlaubter Fahrwert fuer einen Motor.
+        # Der Wert 0 bleibt weiterhin erlaubt, damit Motoren stoppen koennen.
+        self.mindest_motor_geschwindigkeit = mindest_motor_geschwindigkeit
 
-def stop_all():
-    pca.channels[0].duty_cycle = 0
-    pca.channels[1].duty_cycle = 0
-    pca.channels[2].duty_cycle = 0
-    pca.channels[3].duty_cycle = 0
-    pca.channels[4].duty_cycle = 0
-    pca.channels[5].duty_cycle = 0
-    pca.channels[6].duty_cycle = 0
-    pca.channels[7].duty_cycle = 0
-    current_speed_front_left = 0
-    current_speed_front_right = 0
-    current_speed_rear_left = 0
-    current_speed_rear_right = 0
+        # Gespeicherte aktuelle Sollgeschwindigkeiten der vier Motoren.
+        # Diese Werte sind vor allem zum Debuggen hilfreich.
+        self.aktuelle_geschwindigkeit_vorne_links = 0.0
+        self.aktuelle_geschwindigkeit_vorne_rechts = 0.0
+        self.aktuelle_geschwindigkeit_hinten_links = 0.0
+        self.aktuelle_geschwindigkeit_hinten_rechts = 0.0
 
+    def initialisieren(self):
+        # Das PWM-Modul wird fuer Motorsteuerung initialisiert.
+        # 100 Hz ist die verwendete PWM-Frequenz fuer diese Motorsteuerung.
+        log.info("initialize the PWM module")
+        self.pca.frequency = 100
 
-def front_left(speed=0):
-    if 0 > abs(speed) > 100:
-        log.error(f"speed {speed} outside range 0-100")
-        return
+        # Beim Start werden alle Motoren sicher ausgeschaltet.
+        self.alle_stoppen()
 
-    motor_speed = int((abs(speed) * 0xFFFF) / 100)
-    current_speed_front_left = speed
+    def alle_stoppen(self):
+        # Alle acht verwendeten PWM-Kanaele auf 0 setzen.
+        # Jeder Motor belegt zwei Kanaele: einen fuer jede Drehrichtung.
+        for kanal in range(8):
+            self.pca.channels[kanal].duty_cycle = 0
 
-    if speed >= 0:
-        pca.channels[0].duty_cycle = 0
-        pca.channels[1].duty_cycle = motor_speed
-    if speed < 0:
-        pca.channels[0].duty_cycle = motor_speed
-        pca.channels[1].duty_cycle = 0
+        # Interne Geschwindigkeitswerte ebenfalls zuruecksetzen.
+        self.aktuelle_geschwindigkeit_vorne_links = 0.0
+        self.aktuelle_geschwindigkeit_vorne_rechts = 0.0
+        self.aktuelle_geschwindigkeit_hinten_links = 0.0
+        self.aktuelle_geschwindigkeit_hinten_rechts = 0.0
 
+    def _motor_setzen(self, vorwaerts_kanal, rueckwaerts_kanal, geschwindigkeit):
+        # Diese Methode steuert genau einen Motor an.
+        # Jeder Motor besitzt zwei PCA9685-Kanaele:
+        # - ein Kanal fuer die eine Drehrichtung
+        # - ein Kanal fuer die andere Drehrichtung
+        #
+        # geschwindigkeit > 0: Motor dreht in die eine Richtung
+        # geschwindigkeit < 0: Motor dreht in die andere Richtung
+        # geschwindigkeit = 0: beide Kanaele bekommen 0 Prozent PWM
 
-def rear_left(speed=0):
-    if 0 > abs(speed) > 100:
-        log.error(f"speed {speed} outside range 0-100")
-        return
+        # Geschwindigkeit begrenzen, damit nur Werte von -100 bis +100
+        # an die PWM-Berechnung weitergegeben werden.
+        geschwindigkeit = self.geschwindigkeit_begrenzen(geschwindigkeit, -100, 100)
 
-    motor_speed = int((abs(speed) * 0xFFFF) / 100)
-    current_speed_front_right = speed
+        # Sehr kleine PWM-Werte liefern bei Gleichstrommotoren oft zu wenig
+        # Kraft, um sicher loszufahren. Deshalb wird jeder Fahrbefehl ungleich
+        # 0 auf mindestens mindest_motor_geschwindigkeit angehoben.
+        geschwindigkeit = self._mindestansteuerung_anwenden(geschwindigkeit)
 
-    if speed >= 0:
-        pca.channels[2].duty_cycle = 0
-        pca.channels[3].duty_cycle = motor_speed
-    if speed < 0:
-        pca.channels[2].duty_cycle = motor_speed
-        pca.channels[3].duty_cycle = 0
+        # Prozentwert in den 16-Bit-PWM-Wert des PCA9685 umrechnen.
+        pwm_wert = int((abs(geschwindigkeit) * MAXIMALE_PWM_AUFLOESUNG) / 100)
 
+        if geschwindigkeit >= 0:
+            # Positive Geschwindigkeit: Rueckwaerts-Kanal aus,
+            # Vorwaerts-Kanal mit berechnetem PWM-Wert ansteuern.
+            self.pca.channels[vorwaerts_kanal].duty_cycle = 0
+            self.pca.channels[rueckwaerts_kanal].duty_cycle = pwm_wert
+        else:
+            # Negative Geschwindigkeit: Vorwaerts-Kanal aus,
+            # Rueckwaerts-Kanal mit berechnetem PWM-Wert ansteuern.
+            self.pca.channels[vorwaerts_kanal].duty_cycle = pwm_wert
+            self.pca.channels[rueckwaerts_kanal].duty_cycle = 0
 
-def rear_right(speed=0):
-    if 0 > abs(speed) > 100:
-        log.error(f"speed {speed} outside range 0-100")
-        return
+        # Tatsaechlich verwendete Geschwindigkeit zurueckgeben.
+        return geschwindigkeit
 
-    motor_speed = int((abs(speed) * 0xFFFF) / 100)
-    current_speed_rear_left = speed
+    def vorne_links(self, geschwindigkeit=0):
+        # Vorderer linker Motor an PCA9685-Kanal 0 und 1.
+        self.aktuelle_geschwindigkeit_vorne_links = self._motor_setzen(
+            0,
+            1,
+            geschwindigkeit,
+        )
 
-    if speed >= 0:
-        pca.channels[4].duty_cycle = 0
-        pca.channels[5].duty_cycle = motor_speed
-    if speed < 0:
-        pca.channels[4].duty_cycle = motor_speed
-        pca.channels[5].duty_cycle = 0
+    def hinten_links(self, geschwindigkeit=0):
+        # Hinterer linker Motor an PCA9685-Kanal 2 und 3.
+        self.aktuelle_geschwindigkeit_hinten_links = self._motor_setzen(
+            2,
+            3,
+            geschwindigkeit,
+        )
 
+    def hinten_rechts(self, geschwindigkeit=0):
+        # Hinterer rechter Motor an PCA9685-Kanal 4 und 5.
+        self.aktuelle_geschwindigkeit_hinten_rechts = self._motor_setzen(
+            4,
+            5,
+            geschwindigkeit,
+        )
 
-def front_right(speed=0):
-    if 0 > abs(speed) > 100:
-        log.error(f"speed {speed} outside range 0-100")
-        return
+    def vorne_rechts(self, geschwindigkeit=0):
+        # Vorderer rechter Motor an PCA9685-Kanal 6 und 7.
+        self.aktuelle_geschwindigkeit_vorne_rechts = self._motor_setzen(
+            6,
+            7,
+            geschwindigkeit,
+        )
 
-    motor_speed = int((abs(speed) * 0xFFFF) / 100)
-    current_speed_front_left = speed
+    def fahren(self, linke_geschwindigkeit, rechte_geschwindigkeit):
+        # Gemeinsame Fahrfunktion fuer linke und rechte Fahrzeugseite.
+        # Wegen der Einbaurichtung der Motoren muessen einzelne Motoren
+        # mit umgekehrtem Vorzeichen angesteuert werden.
+        #
+        # Diese Funktion wird noch fuer die Suchbewegung benutzt.
+        # Fuer normales Linienfolgen wird raeder_fahren() verwendet, weil dort
+        # jedes Rad einzeln getrimmt werden kann.
+        self.vorne_links(linke_geschwindigkeit)
+        self.hinten_links(-linke_geschwindigkeit)
+        self.vorne_rechts(-rechte_geschwindigkeit)
+        self.hinten_rechts(rechte_geschwindigkeit)
 
-    if speed >= 0:
-        pca.channels[6].duty_cycle = 0
-        pca.channels[7].duty_cycle = motor_speed
-    if speed < 0:
-        pca.channels[6].duty_cycle = motor_speed
-        pca.channels[7].duty_cycle = 0
+    def raeder_fahren(
+        self,
+        vorne_links_geschwindigkeit,
+        hinten_links_geschwindigkeit,
+        vorne_rechts_geschwindigkeit,
+        hinten_rechts_geschwindigkeit,
+    ):
+        # Einzelrad-Fahrfunktion. Hier koennen alle vier Raeder getrennt
+        # angepasst werden, ohne die Motor-Kanalzuordnung zu veraendern.
+        #
+        # Die Vorzeichen sind absichtlich unterschiedlich:
+        # Durch die mechanische Einbaurichtung drehen nicht alle Motoren bei
+        # gleichem PWM-Vorzeichen in dieselbe Fahrtrichtung.
+        self.vorne_links(vorne_links_geschwindigkeit)
+        self.hinten_links(-hinten_links_geschwindigkeit)
+        self.vorne_rechts(-vorne_rechts_geschwindigkeit)
+        self.hinten_rechts(hinten_rechts_geschwindigkeit)
 
+    @staticmethod
+    def geschwindigkeit_begrenzen(wert, minimum, maximum):
+        # Hilfsfunktion: begrenzt einen Wert auf einen erlaubten Bereich.
+        return max(minimum, min(maximum, wert))
 
-init()
+    def _mindestansteuerung_anwenden(self, geschwindigkeit):
+        # 0 muss 0 bleiben, damit alle_stoppen() und bewusster Motorstopp
+        # weiterhin funktionieren.
+        if geschwindigkeit == 0:
+            return 0
 
-rear_right(30)
-front_right(-30)
-rear_left(-30)
-front_left(30)
-time.sleep(1)
-stop_all()
+        if abs(geschwindigkeit) < self.mindest_motor_geschwindigkeit:
+            if geschwindigkeit > 0:
+                return self.mindest_motor_geschwindigkeit
+            return -self.mindest_motor_geschwindigkeit
+
+        return geschwindigkeit
