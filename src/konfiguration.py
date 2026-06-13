@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LinienfolgerKonfiguration:
-    basis_geschwindigkeit: float = 30.0
+    basis_geschwindigkeit: float = 33.0
     maximale_geschwindigkeit: float = 100.0
     p_faktor: float = 10.0
     d_faktor: float = 15.0
