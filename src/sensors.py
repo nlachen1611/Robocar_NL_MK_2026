@@ -1,31 +1,36 @@
+from dataclasses import dataclass
+
 from gpiozero import LineSensor
 
 
+GPIO_SENSOR_LINKS = 14
+GPIO_SENSOR_MITTE = 15
+GPIO_SENSOR_RECHTS = 23
+
+
+@dataclass(frozen=True)
+class SensorWerte:
+    links: int
+    mitte: int
+    rechts: int
+
+    def anzahl_aktiver_sensoren(self):
+        return self.links + self.mitte + self.rechts
+
+
 class LinienSensoren:
-    # Diese Klasse kapselt die drei digitalen Liniensensoren.
-    def __init__(self):
-        # Die Sensoren sind mittig vor dem Fahrzeug angeordnet.
-        # Von Sensor zu Sensor betraegt der Abstand 1.5 cm.
+    def __init__(self, schwarz_wert):
+        self.schwarz_wert = schwarz_wert
+        self.sensor_links = LineSensor(GPIO_SENSOR_LINKS)
+        self.sensor_mitte = LineSensor(GPIO_SENSOR_MITTE)
+        self.sensor_rechts = LineSensor(GPIO_SENSOR_RECHTS)
 
-        # Sensor links an GPIO 14.
-        self.links = LineSensor(14)
+    def schwarz_lesen(self):
+        return SensorWerte(
+            links=self._erkennt_schwarz(self.sensor_links),
+            mitte=self._erkennt_schwarz(self.sensor_mitte),
+            rechts=self._erkennt_schwarz(self.sensor_rechts),
+        )
 
-        # Sensor in der Mitte an GPIO 15.
-        self.mitte = LineSensor(15)
-
-        # Sensor rechts an GPIO 23.
-        self.rechts = LineSensor(23)
-
-    def lesen(self):
-        # Aktuelle Rohwerte der drei Sensoren lesen.
-        # Rueckgabeformat: (links, mitte, rechts)
-        return int(self.links.value), int(self.mitte.value), int(self.rechts.value)
-
-    def schwarz_lesen(self, schwarz_wert):
-        # Rohwerte in ein einheitliches Format umwandeln:
-        # 1 bedeutet "Sensor sieht schwarz", 0 bedeutet "Sensor sieht nicht schwarz".
-        #
-        # Manche Sensor-Module liefern bei schwarz 1, andere bei schwarz 0.
-        # Deshalb wird schwarz_wert in der Konfiguration festgelegt.
-        werte = self.lesen()
-        return tuple(1 if wert == schwarz_wert else 0 for wert in werte)
+    def _erkennt_schwarz(self, sensor):
+        return int(sensor.value == self.schwarz_wert)
