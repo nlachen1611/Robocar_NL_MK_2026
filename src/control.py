@@ -4,7 +4,6 @@ import time
 
 from motors import MotorSteuerung
 
-
 log = logging.getLogger(__name__)
 
 
@@ -17,7 +16,7 @@ class LinienfolgerKonfiguration:
         # Grundgeschwindigkeit, mit der das Fahrzeug geradeaus faehrt.
         # Dieser Wert wird fuer beide Fahrzeugseiten benutzt, solange keine
         # Lenk-Korrektur noetig ist.
-        self.basis_geschwindigkeit = 20.0
+        self.basis_geschwindigkeit = 30.0
 
         # Maximale erlaubte Motorgeschwindigkeit.
         # Dadurch kann die Regelung die Motoren nicht zu stark ansteuern.
@@ -34,7 +33,7 @@ class LinienfolgerKonfiguration:
         # Linienabweichung gegengelenkt wird.
         # Groesserer Wert: Auto lenkt staerker.
         # Kleinerer Wert: Auto faehrt ruhiger, reagiert aber spaeter.
-        self.kp = 5.0
+        self.kp = 2.0
 
         # D-Anteil der Regelung.
         # Dieser Anteil reagiert auf schnelle Aenderungen des geglaetteten
@@ -265,9 +264,7 @@ class Linienfolger:
         # gebildet. Dadurch entsteht z. B. bei links+mitte der Wert -0.75 cm
         # statt direkt -1.5 cm. Das macht Kurvenuebergaenge weicher.
         fehler = (
-            (-sensor_abstand * links)
-            + (0.0 * mitte)
-            + (sensor_abstand * rechts)
+            (-sensor_abstand * links) + (0.0 * mitte) + (sensor_abstand * rechts)
         ) / aktive_sensoren
 
         # Letzte bekannte Linienposition speichern.
@@ -281,9 +278,8 @@ class Linienfolger:
         # Der rohe Sensorfehler springt bei digitalen Sensoren hart zwischen
         # wenigen Werten. Deshalb wird er geglaettet.
         alpha = self.konfiguration.fehler_filter_alpha
-        self.gefilterter_fehler = (
-            (alpha * roher_fehler)
-            + ((1.0 - alpha) * self.gefilterter_fehler)
+        self.gefilterter_fehler = (alpha * roher_fehler) + (
+            (1.0 - alpha) * self.gefilterter_fehler
         )
 
         # Wenn die Linie genau mittig erkannt wird, wird der geglaettete Fehler
@@ -391,14 +387,10 @@ class Linienfolger:
         # angesteuert und die Aussenraeder kraeftig vorwaerts.
         linker_sensor, mittlerer_sensor, rechter_sensor = sensor_werte
         nur_linker_sensor = (
-            linker_sensor == 1
-            and mittlerer_sensor == 0
-            and rechter_sensor == 0
+            linker_sensor == 1 and mittlerer_sensor == 0 and rechter_sensor == 0
         )
         nur_rechter_sensor = (
-            linker_sensor == 0
-            and mittlerer_sensor == 0
-            and rechter_sensor == 1
+            linker_sensor == 0 and mittlerer_sensor == 0 and rechter_sensor == 1
         )
 
         if nur_linker_sensor:
@@ -408,12 +400,16 @@ class Linienfolger:
             linke_geschwindigkeit = (
                 -self.konfiguration.scharfkurve_innen_rueckwaerts_geschwindigkeit
             )
-            rechte_geschwindigkeit = self.konfiguration.scharfkurve_aussen_geschwindigkeit
+            rechte_geschwindigkeit = (
+                self.konfiguration.scharfkurve_aussen_geschwindigkeit
+            )
         elif nur_rechter_sensor:
             # Linie liegt deutlich rechts:
             # rechte Innenraeder rueckwaerts, linke Aussenraeder vorwaerts.
             self._pid_speicher_zuruecksetzen()
-            linke_geschwindigkeit = self.konfiguration.scharfkurve_aussen_geschwindigkeit
+            linke_geschwindigkeit = (
+                self.konfiguration.scharfkurve_aussen_geschwindigkeit
+            )
             rechte_geschwindigkeit = (
                 -self.konfiguration.scharfkurve_innen_rueckwaerts_geschwindigkeit
             )
@@ -532,5 +528,7 @@ class Linienfolger:
         # Linke und rechte Seite entgegengesetzt ansteuern, damit das Fahrzeug
         # auf der Stelle bzw. sehr eng dreht.
         linke_geschwindigkeit = such_richtung * self.konfiguration.such_geschwindigkeit
-        rechte_geschwindigkeit = -such_richtung * self.konfiguration.such_geschwindigkeit
+        rechte_geschwindigkeit = (
+            -such_richtung * self.konfiguration.such_geschwindigkeit
+        )
         self.motoren.fahren(linke_geschwindigkeit, rechte_geschwindigkeit)
