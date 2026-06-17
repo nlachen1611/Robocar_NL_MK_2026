@@ -1,0 +1,11 @@
+{
+  "basis_geschwindigkeit": 30.0,
+  "maximale_geschwindigkeit": 100.0,
+  "p_faktor": 10.0,
+  "d_faktor": 15.0,
+  "trim_links": 1.0,
+  "trim_rechts": 1.0,
+  "regelintervall_sekunden": 0.03,
+  "such_geschwindigkeit": 35.0,
+  "schwarz_wert": 1
+}
